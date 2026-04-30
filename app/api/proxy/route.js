@@ -1,136 +1,133 @@
-// app/api/proxy/route.js
-// Server-side proxy — browser tidak pernah langsung call kie.ai
-// Semua request ke kie.ai dilakukan dari server Node.js Next.js
-// Tidak ada CORS issue sama sekali
-
 export const runtime = 'nodejs'
-export const maxDuration = 120 // 2 menit max untuk polling
+export const maxDuration = 120
 
 export async function POST(request) {
+  let body = {}
   try {
-    const body = await request.json()
-    const { action, apiKey } = body
+    body = await request.json()
+  } catch (e) {
+    return Response.json({ ok: false, error: 'Request body tidak valid JSON', detail: e.message }, { status: 400 })
+  }
 
-    if (!apiKey) {
-      return Response.json({ ok: false, error: 'API key tidak boleh kosong' }, { status: 400 })
-    }
+  const { action } = body
 
-    const KIE_BASE     = 'https://api.kie.ai'
-    const UPLOAD_BASE  = 'https://kieai.redpandaai.co'
-    const AUTH_HEADER  = { 'Authorization': `Bearer ${apiKey}` }
+  // Log semua request masuk (tampil di Vercel Function Logs)
+  console.log('[proxy] action:', action, '| body keys:', Object.keys(body).join(', '))
 
-    // ─────────────────────────────────────
-    // ACTION: upload
-    // Upload foto ke kieai.redpandaai.co lalu dapat downloadUrl
-    // ─────────────────────────────────────
-    if (action === 'upload') {
-      const { base64Data, mimeType } = body
-      const ext = mimeType?.split('/')[1] || 'jpg'
+  const KIE_KEY = process.env.KIE_API_KEY
+  if (!KIE_KEY) {
+    console.error('[proxy] KIE_API_KEY env variable tidak ditemukan!')
+    return Response.json({ ok: false, error: 'Server belum dikonfigurasi — KIE_API_KEY kosong. Set di Vercel Environment Variables.' }, { status: 500 })
+  }
 
-      const res = await fetch(`${UPLOAD_BASE}/api/file-base64-upload`, {
+  const AUTH = { 'Authorization': `Bearer ${KIE_KEY}` }
+
+  // ─── UPLOAD ───
+  if (action === 'upload') {
+    const { base64Data, mimeType } = body
+    if (!base64Data) return Response.json({ ok: false, error: 'base64Data kosong' }, { status: 400 })
+
+    const ext = (mimeType || 'image/jpeg').split('/')[1] || 'jpg'
+    console.log('[upload] mimeType:', mimeType, '| base64 length:', base64Data?.length)
+
+    try {
+      const res = await fetch('https://kieai.redpandaai.co/api/file-base64-upload', {
         method: 'POST',
-        headers: { ...AUTH_HEADER, 'Content-Type': 'application/json' },
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          base64Data,                              // full data URL: "data:image/jpeg;base64,..."
-          uploadPath: 'chinese-studio',
-          fileName: `ref-${Date.now()}.${ext}`,
+          base64Data,
+          uploadPath: 'studio-foto',
+          fileName: `photo-${Date.now()}.${ext}`,
         }),
       })
-
       const data = await res.json()
-      console.log('[upload response]', JSON.stringify(data).slice(0, 200))
+      console.log('[upload] response status:', res.status, '| data:', JSON.stringify(data).slice(0, 300))
 
       if (!res.ok || !data.data?.downloadUrl) {
-        return Response.json({ ok: false, error: data.msg || `Upload gagal (${res.status})` })
+        return Response.json({ ok: false, error: data.msg || `Upload gagal: HTTP ${res.status}`, raw: data })
       }
-
       return Response.json({ ok: true, fileUrl: data.data.downloadUrl })
+    } catch (err) {
+      console.error('[upload] fetch error:', err.message)
+      return Response.json({ ok: false, error: `Upload network error: ${err.message}` }, { status: 500 })
     }
+  }
 
-    // ─────────────────────────────────────
-    // ACTION: generate
-    // Submit task ke kie.ai Market API
-    // ─────────────────────────────────────
-    if (action === 'generate') {
-      const { prompt, fileUrl, aspectRatio } = body
+  // ─── GENERATE ───
+  if (action === 'generate') {
+    const { prompt, fileUrl, aspectRatio } = body
+    if (!prompt) return Response.json({ ok: false, error: 'prompt kosong' }, { status: 400 })
 
-      // GPT Image 2 Image-to-Image
-      // POST https://api.kie.ai/api/v1/jobs/createTask
-      // body: { model, input: { prompt, input_urls, aspect_ratio } }
-      const payload = {
-        model: 'gpt-image-2-image-to-image',
-        input: {
-          prompt,
-          aspect_ratio: aspectRatio || '2:3',
-          ...(fileUrl && { input_urls: [fileUrl] }),
-        },
-      }
+    const payload = {
+      model: 'gpt-image-2-image-to-image',
+      input: {
+        prompt,
+        aspect_ratio: aspectRatio || '2:3',
+        ...(fileUrl && { input_urls: [fileUrl] }),
+      },
+    }
+    console.log('[generate] payload:', JSON.stringify(payload).slice(0, 400))
 
-      console.log('[generate] payload:', JSON.stringify(payload).slice(0, 300))
-
-      const res = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
+    try {
+      const res = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
         method: 'POST',
-        headers: { ...AUTH_HEADER, 'Content-Type': 'application/json' },
+        headers: { ...AUTH, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-
       const data = await res.json()
-      console.log('[generate response]', JSON.stringify(data).slice(0, 200))
+      console.log('[generate] response status:', res.status, '| data:', JSON.stringify(data).slice(0, 300))
 
       if (!res.ok || data.code !== 200) {
-        return Response.json({ ok: false, error: data.msg || `Generate gagal (${res.status})` })
+        return Response.json({ ok: false, error: data.msg || `Generate gagal: HTTP ${res.status}`, raw: data })
       }
-
       return Response.json({ ok: true, taskId: data.data.taskId })
+    } catch (err) {
+      console.error('[generate] fetch error:', err.message)
+      return Response.json({ ok: false, error: `Generate network error: ${err.message}` }, { status: 500 })
     }
+  }
 
-    // ─────────────────────────────────────
-    // ACTION: poll
-    // Cek status task di kie.ai
-    // ─────────────────────────────────────
-    if (action === 'poll') {
-      const { taskId } = body
+  // ─── POLL ───
+  if (action === 'poll') {
+    const { taskId } = body
+    if (!taskId) return Response.json({ ok: false, error: 'taskId kosong' }, { status: 400 })
 
-      // GET https://api.kie.ai/api/v1/jobs/recordInfo?taskId=xxx
-      // state: waiting | queuing | generating | success | fail
-      // resultJson: JSON string → parse → { resultUrls: ["https://..."] }
-      const res = await fetch(
-        `${KIE_BASE}/api/v1/jobs/recordInfo?taskId=${taskId}`,
-        { headers: AUTH_HEADER }
-      )
-
+    try {
+      const res = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`, {
+        headers: AUTH,
+      })
       const data = await res.json()
-      console.log('[poll]', data?.data?.state, taskId)
+      console.log('[poll] taskId:', taskId, '| state:', data?.data?.state)
 
       if (!res.ok || data.code !== 200) {
-        return Response.json({ ok: false, error: data.msg || `Poll gagal (${res.status})` })
+        return Response.json({ ok: false, error: data.msg || `Poll gagal: HTTP ${res.status}` })
       }
 
       const d = data.data
-      const state = d.state // waiting | queuing | generating | success | fail
-
       let resultUrl = null
-      if (state === 'success' && d.resultJson) {
+      if (d.state === 'success' && d.resultJson) {
         try {
           const rj = JSON.parse(d.resultJson)
           resultUrl = rj.resultUrls?.[0] || null
+          console.log('[poll] resultUrl:', resultUrl)
         } catch (e) {
-          console.error('[poll] resultJson parse error', e)
+          console.error('[poll] parse resultJson error:', e.message)
         }
       }
 
       return Response.json({
         ok: true,
-        state,
+        state: d.state,
         resultUrl,
-        failMsg: d.failMsg || null,
+        failMsg: d.failMsg || d.failCode || null,
       })
+    } catch (err) {
+      console.error('[poll] fetch error:', err.message)
+      return Response.json({ ok: false, error: `Poll network error: ${err.message}` }, { status: 500 })
     }
-
-    return Response.json({ ok: false, error: `Action tidak dikenal: ${action}` }, { status: 400 })
-
-  } catch (err) {
-    console.error('[proxy error]', err)
-    return Response.json({ ok: false, error: err.message }, { status: 500 })
   }
+
+  // Unknown action
+  console.error('[proxy] unknown action:', action)
+  return Response.json({ ok: false, error: `Action tidak dikenal: "${action}"` }, { status: 400 })
 }
