@@ -193,9 +193,9 @@ const buildPrompt = (categoryId, styleId, gender, accessories, bgId, custom) => 
     if (a) subject += '. ' + ((isFemale && a.pF) ? a.pF : a.p)
   })
 
-  const faceRef = 'IMPORTANT: Use the uploaded photo STRICTLY as facial reference. Preserve exact face, skin tone, age, identity — do NOT alter the face at all. Only change clothes, styling and background'
-  const quality = 'ultra high resolution 8K, professional photography, sharp focus, perfect exposure, cinematic lighting, bokeh background, photorealistic, magazine quality'
-  return `${faceRef}. Create a stunning portrait: ${subject}. Background: ${bgPrompt}. ${quality}.${custom ? ' ' + custom : ''}`
+  const faceRef = 'CRITICAL INSTRUCTION: The uploaded photo is the FACE REFERENCE. You MUST preserve the exact same face — same person, same facial structure, same skin tone, same eye shape, same nose, same lips, same age. DO NOT change or beautify the face. DO NOT replace with a model face. ONLY change the clothing, hairstyle and background. The final result must be clearly recognizable as the same person'
+  const quality = 'ultra high resolution 8K, professional portrait photography, tack sharp focus, perfect studio exposure, cinematic lighting with soft fill, realistic skin texture, photorealistic, magazine cover quality'
+  return `${faceRef}. Portrait style: ${subject}. Background setting: ${bgPrompt}. ${quality}.${custom ? ' Additional detail: ' + custom : ''}`
 }
 
 // ═══════════════════════════════════════════════════
@@ -445,13 +445,13 @@ export default function Page() {
         <header style={{padding:'18px 18px 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <div>
             <div style={{fontSize:24,fontWeight:800,color:'#8B0000',letterSpacing:-0.5,lineHeight:1.1}}>Studio Foto</div>
-            <div style={{fontSize:11,color:T.muted,letterSpacing:2,textTransform:'uppercase',marginTop:2}}>AI · Powered by kie.ai</div>
+
           </div>
           <button onClick={toggleTheme} style={{width:48,height:28,borderRadius:14,border:`1.5px solid ${T.border}`,background:isDark?'rgba(139,0,0,0.25)':'rgba(201,168,76,0.15)',cursor:'pointer',position:'relative',transition:'0.3s ease',flexShrink:0}}>
             <div style={{position:'absolute',top:3,width:20,height:20,borderRadius:'50%',background:isDark?'#C9A84C':'#8B0000',left:isDark?3:'calc(100% - 23px)',transition:'left 0.3s ease',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>{isDark?'🌙':'☀️'}</div>
           </button>
         </header>
-        <div style={{padding:'4px 18px 10px',fontSize:13,color:T.muted}}>Ubah fotomu jadi foto keren dengan AI ✨</div>
+
 
         {/* TAB BUAT */}
         {tab === 'buat' && (
@@ -512,7 +512,15 @@ export default function Page() {
             {/* Accessories */}
             <Sec label="Aksesori"/>
             <div style={{display:'flex',flexWrap:'wrap',gap:7,marginBottom:4}}>
-              {ACCESSORIES.filter(a=>!(a.id==='hairpin'&&gender==='male')&&!(a.id==='veil'&&gender==='male')&&!(a.id==='crown'&&gender==='male')).map(a=>(
+              {ACCESSORIES.filter(a => {
+                if (gender === 'male') {
+                  // Items yang female-only (hanya punya pF, tidak punya p)
+                  if (!a.p && a.pF) return false
+                  // Items yang eksplisit female-only  
+                  if (['hairpin','veil','crown'].includes(a.id)) return false
+                }
+                return true
+              }).map(a=>(
                 <Chip key={a.id} active={accessories.has(a.id)} onClick={()=>toggleAcc(a.id)}>{a.label}</Chip>
               ))}
             </div>
